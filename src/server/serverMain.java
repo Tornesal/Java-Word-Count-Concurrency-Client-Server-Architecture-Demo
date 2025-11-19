@@ -6,25 +6,16 @@ import java.io.*;
 public class serverMain {
     public static void main(String[] args) throws Exception {
 
-        ServerSocket server = new ServerSocket(5000);
-        System.out.println("Server running...");
+        ServerSocket server = new ServerSocket(5050); // keep 5050
+        System.out.println("Server running on port 5050...");
 
         while (true) {
             Socket client = server.accept();
-            System.out.println("Client connected!");
+            System.out.println("Client connected from " + client.getInetAddress());
 
-            BufferedReader in = new BufferedReader(
-                    new InputStreamReader(client.getInputStream())
-            );
-
-            PrintWriter out = new PrintWriter(
-                    client.getOutputStream(), true
-            );
-
-            String msg = in.readLine();
-            System.out.println("Client said: " + msg);
-
-            out.println("ACK: " + msg);
+            // Spawn a new thread for this client
+            Thread t = new Thread(new clientHandler(client));
+            t.start();
         }
     }
 }
