@@ -5,28 +5,23 @@ import java.io.*;
 
 public class clientMain {
     public static void main(String[] args) throws Exception {
-
         Socket s = new Socket("localhost", 5050);
-
         PrintWriter out = new PrintWriter(s.getOutputStream(), true);
-        BufferedReader in = new BufferedReader(
-                new InputStreamReader(s.getInputStream())
-        );
+        BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream()));
 
-        // Build a test STORE request using TABS
         String command = "STORE";
-        String filename = "test.txt";
-        String flags = "LWC"; // L = lines, W = words, C = chars
+        String filename = "grammar_test.txt";
+        String flags = "LWC";
+        // Test String: "Hello-World; 123."
+        // Lines: 1
+        // Words: 3 ("Hello", "World", "123") -> Separators are - and ; and .
+        // Chars: 13 (H,e,l,l,o,W,o,r,l,d,1,2,3) -> Separators are NOT counted as valid characters
+        String fileData = "Hello-World; 123.";
 
-        String header = command + "\t" + filename + "\t" + flags;
-        String fileData = "Hello there this is a test file.";
-
-        // Send header line
-        out.println(header);
-        // Send data line (because STORE needs data)
+        out.println(command + "\t" + filename + "\t" + flags);
         out.println(fileData);
 
-        // Read server response
+        // 2. Get Response
         String reply = in.readLine();
         System.out.println("Server replied: " + reply);
 

@@ -6,86 +6,117 @@ import java.io.*;
 public class clientHandler implements Runnable {
 
     private final Socket socket;
+    private final cacheHandler cache;
+    private final dataManager dataManager;
 
-    public clientHandler(Socket socket) {
+    public clientHandler(Socket socket, cacheHandler cache, dataManager dataManager) {
         this.socket = socket;
+        this.cache = cache;
+        this.dataManager = dataManager;
     }
 
     @Override
     public void run() {
         try (
-                BufferedReader in = new BufferedReader(
-                        new InputStreamReader(socket.getInputStream())
-                );
+                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 PrintWriter out = new PrintWriter(socket.getOutputStream(), true)
         ) {
-            // Read first line: COMMAND<TAB>FILENAME<TAB>FLAGS
+            // Protocol Handshake
             String header = in.readLine();
-            if (header == null) {
-                System.out.println("Client disconnected before sending header.");
-                return;
-            }
+            if (header == null) return;
 
             System.out.println("Received header: " + header);
 
+            // Parse TAB-delimited protocol
             String[] parts = header.split("\t");
-            if (parts.length < 3) {
+            if (parts.length < 2) {
                 out.println("ERROR\tBAD_HEADER");
-                System.out.println("Bad header from client.");
                 return;
             }
 
-            String command = parts[0];   // e.g., STORE
-            String filename = parts[1];  // e.g., notes.txt
-            String flags = parts[2];     // e.g., LWC
+            String command = parts[0];
+            String filename = parts[1];
+            // Safety check for optional flags (some commands don't use them)
+            String flags = parts.length > 2 ? parts[2] : "";
 
-            // For commands that need file data, read one more line
+            // Data Ingestion (for STORE/UPDATE)
             String data = null;
             if (command.equals("STORE") || command.equals("UPDATE")) {
-                data = in.readLine(); // for now: single-line file contents
-                if (data == null) {
-                    out.println("ERROR\tNO_DATA");
-                    System.out.println("Expected data line but got null.");
-                    return;
-                }
-                System.out.println("Received data: " + data);
+                data = in.readLine();
+                if (data == null) { out.println("ERROR\tNO_DATA"); return; }
             }
 
-            // TODO: later, call persistence + word count + cache here.
-            // For now, just echo something back so we can test the protocol.
+            // Command Processing
             switch (command) {
                 case "STORE":
+                case "UPDATE":
+                    // Write-Through Strategy: Update Disk AND Cache
+                    // Ensures consistency if the server crashes immediately after
+                    dataManager.saveFile(filename, data);
+                    cache.put(filename, data);
+
+                    // Calculate stats for this specific request
                     wordCounts wc = wordCounter.count(data);
 
+                    // Update the persistent global system totals
+                    dataManager.updateTotals(wc.lineCount, wc.wordCount, wc.charCount);
+
+                    // Build response based on user flags
                     StringBuilder resp = new StringBuilder("OK");
-
-                    if (flags.contains("L")) {
-                        resp.append("\tLINES=").append(wc.lineCount);
-                    }
-                    if (flags.contains("W")) {
-                        resp.append("\tWORDS=").append(wc.wordCount);
-                    }
-                    if (flags.contains("C")) {
-                        resp.append("\tCHARS=").append(wc.charCount);
-                    }
-
+                    if (flags.contains("L")) resp.append("\tLINES=").append(wc.lineCount);
+                    if (flags.contains("W")) resp.append("\tWORDS=").append(wc.wordCount);
+                    if (flags.contains("C")) resp.append("\tCHARS=").append(wc.charCount);
                     out.println(resp.toString());
                     break;
 
-                case "LIST":
-                    out.println("OK\tFILES=stub1.txt,stub2.txt");
+                case "READ":
+                    String content = null;
+
+                    // Read-Through Strategy
+                    // 1. Check RAM (Cache) for speed
+                    if (cache.contains(filename)) {
+                        content = cache.get(filename);
+                    }
+                    // 2. Fallback to Data Layer (Disk)
+                    else {
+                        content = dataManager.readFile(filename);
+                        if (content != null) {
+                            System.out.println("[DATA] Disk Read: " + filename);
+                            // Populate cache to speed up future reads
+                            cache.put(filename, content);
+                        }
+                    }
+
+                    if (content != null) out.println("OK\t" + content);
+                    else out.println("ERROR\tFILE_NOT_FOUND");
                     break;
+
+                case "REMOVE":
+                    // Maintain consistency by cleaning both layers
+                    cache.remove(filename);
+                    dataManager.deleteFile(filename);
+                    out.println("OK\tREMOVED");
+                    break;
+
+                case "LIST":
+                    // Directory lookup on the Data Layer
+                    out.println("OK\tFILES=" + dataManager.getFileList());
+                    break;
+
+                case "TOTALS":
+                    // Retrieve persistent system-wide statistics
+                    out.println("OK\t" + dataManager.getTotals());
+                    break;
+
                 default:
                     out.println("ERROR\tUNKNOWN_COMMAND");
                     break;
             }
 
         } catch (IOException e) {
-            System.out.println("Client handler error: " + e.getMessage());
+            System.out.println("Handler error: " + e.getMessage());
         } finally {
-            try {
-                socket.close();
-            } catch (IOException ignore) {}
+            try { socket.close(); } catch (IOException ignore) {}
         }
     }
 }
