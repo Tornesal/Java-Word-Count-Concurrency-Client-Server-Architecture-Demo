@@ -9,34 +9,33 @@ public class wordCounter {
             return new wordCounts(0, 0, 0);
         }
 
-        // 1. Count Lines
-        // Grammar: <line> -> <words> '\n'
-        // We use -1 to include trailing empty lines if necessary, though usually split is sufficient
-        String[] lines = text.split("\n");
-        int lineCount = lines.length;
-
-        // 2. Count Words
-        // Grammar: <words> -> <word> | <words> <separator> <word>
-        // Separators defined as: blank, dot, :, ;, -
-        // We split by any combination of these specific characters
-        String[] tokens = text.split("[ .:;-]+");
-
+        int lineCount = 0;
         int wordCount = 0;
-        for (String t : tokens) {
-            // Only count if the token actually contains data (handles leading/trailing separators)
-            if (!t.trim().isEmpty()) {
-                wordCount++;
-            }
-        }
-
-        // 3. Count Characters
-        // Grammar: "Characters will be represented as the number of characters that are valid within the specified grammar"
-        // Valid units are: A-Z, a-z, 0-9
         int charCount = 0;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (isGrammarUnit(c)) {
-                charCount++;
+
+        // 1. Split by logical lines first (handles \n)
+        String[] lines = text.split("\n");
+        lineCount = lines.length;
+
+        for (String line : lines) {
+            // 2. Count Words per line
+            // Separators: space, dot, colon, semi-colon, dash
+            // We trim first to avoid empty tokens from leading spaces
+            String[] tokens = line.trim().split("[ .:;-]+");
+
+            for (String t : tokens) {
+                if (!t.isEmpty()) {
+                    wordCount++;
+                }
+            }
+
+            // 3. Count Characters per line
+            // Valid units: A-Z, a-z, 0-9
+            for (int i = 0; i < line.length(); i++) {
+                char c = line.charAt(i);
+                if (isGrammarUnit(c)) {
+                    charCount++;
+                }
             }
         }
 

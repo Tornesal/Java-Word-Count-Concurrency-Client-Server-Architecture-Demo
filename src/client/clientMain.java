@@ -7,114 +7,162 @@ import java.util.Scanner;
 public class clientMain {
     public static void main(String[] args) {
         Scanner scanner = new Scanner(System.in);
+        Socket socket = null;
+        PrintWriter out = null;
+        BufferedReader in = null;
 
-        System.out.println("--- Word Count Client ---");
+        System.out.println("----- Word Count Client -----");
 
-        while (true) {
-            System.out.println("\nSelect Option:");
-            System.out.println("1. Store/Update File");
-            System.out.println("2. Read File");
-            System.out.println("3. Remove File");
-            System.out.println("4. List Files");
-            System.out.println("5. Get System Totals");
-            System.out.println("6. Exit");
-            System.out.print("> ");
+        try {
+            // Initialize connection once (Persistent Connection)
+            System.out.println("Connecting to server...");
+            socket = new Socket("localhost", 5050);
+            out = new PrintWriter(socket.getOutputStream(), true);
+            in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            System.out.println("Connected!");
 
-            String choice = scanner.nextLine();
+            // Loop until user chooses Exit
+            boolean running = true;
+            while (running) {
+                System.out.println("\nSelect Option:");
+                System.out.println("1. Store/Update File");
+                System.out.println("2. Read File");
+                System.out.println("3. Remove File");
+                System.out.println("4. List Files");
+                System.out.println("5. Get System Totals");
+                System.out.println("6. Exit");
+                System.out.print("> ");
 
-            if (choice.equals("6")) {
-                System.out.println("Exiting.");
-                break;
-            }
-
-            try {
-                // Connect to server for each request (stateless connection pattern)
-                Socket socket = new Socket("localhost", 5050);
-                PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                String choice = scanner.nextLine();
 
                 String request = null;
                 String extraData = null;
 
-                // Logic to build the request based on user input
+                // Determine Action based on User Input
                 switch (choice) {
-                    case "1": // STORE
+                    // STORE
+                    case "1":
                         System.out.print("Enter filename on Server: ");
-                        String remoteName = scanner.nextLine();
+                        String remoteName = scanner.nextLine().trim();
 
-                        System.out.print("Enter local file path to upload (or type 'manual'): ");
-                        String localPath = scanner.nextLine();
+                        System.out.print("Enter local file path (or 'manual'): ");
+                        String localPath = scanner.nextLine().trim();
 
+                        StringBuilder contentBuilder = new StringBuilder();
+
+                        // Manual Entry Mode
                         if (localPath.equalsIgnoreCase("manual")) {
-                            System.out.print("Type content: ");
-                            extraData = scanner.nextLine();
-                        } else {
-                            // Read local file
-                            extraData = readLocalFile(localPath);
-                            if (extraData == null) {
-                                System.out.println("Error reading local file.");
-                                socket.close();
-                                continue;
+                            System.out.println("Type content ('DONE' on new line to finish):");
+
+                            // Sentinel Loop for Input
+                            while (true) {
+                                String line = scanner.nextLine();
+                                if (line.equals("DONE")) break;
+                                contentBuilder.append(line).append("\n");
                             }
                         }
+                        // File Reading Mode
+                        else {
+                            String fileContent = readLocalFile(localPath);
+                            if (fileContent == null) {
+                                System.out.println("Error reading file.");
+                                continue;
+                            }
+                            contentBuilder.append(fileContent);
+                        }
 
-                        System.out.print("Enter Flags (e.g. LWC): ");
-                        String flags = scanner.nextLine();
-                        if (flags.isEmpty()) flags = "LWC"; // Default
+                        extraData = contentBuilder.toString();
 
-                        // Protocol: STORE \t filename \t flags
+                        System.out.print("Enter Flags (LWC): ");
+                        String flags = scanner.nextLine().trim();
+                        if (flags.isEmpty()) flags = "LWC";
+
                         request = "STORE\t" + remoteName + "\t" + flags;
                         break;
 
-                    case "2": // READ
-                        System.out.print("Enter filename to read: ");
-                        String readName = scanner.nextLine();
+                    // READ
+                    case "2":
+                        System.out.print("Enter filename: ");
+                        String readName = scanner.nextLine().trim();
                         request = "READ\t" + readName + "\t0";
                         break;
 
-                    case "3": // REMOVE
-                        System.out.print("Enter filename to remove: ");
-                        String remName = scanner.nextLine();
+                    // REMOVE
+                    case "3":
+                        System.out.print("Enter filename: ");
+                        String remName = scanner.nextLine().trim();
                         request = "REMOVE\t" + remName + "\t0";
                         break;
 
-                    case "4": // LIST
+                    // LIST
+                    case "4":
                         request = "LIST\tnull\t0";
                         break;
 
-                    case "5": // TOTALS
+                    // TOTALS
+                    case "5":
                         request = "TOTALS\tnull\t0";
                         break;
 
+                    // EXIT
+                    case "6":
+                        // Break loop to trigger cleanup
+                        running = false;
+                        continue;
+
                     default:
                         System.out.println("Invalid option.");
-                        socket.close();
                         continue;
                 }
 
-                // Send Request
+                // Protocol Transmission
                 if (request != null) {
                     out.println(request);
-                    // If we have file content (for STORE), send it now
+
+                    // Send Payload if required
                     if (extraData != null) {
-                        out.println(extraData);
+                        out.print(extraData);
+                        // Send Sentinel to close stream
+                        out.println("__END__");
+                    }
+
+                    // Receive Response
+                    String responseHeader = in.readLine();
+                    if (responseHeader == null) {
+                        System.out.println("Server disconnected.");
+                        break;
+                    }
+
+                    // Handle Multi-line Read Response
+                    if (choice.equals("2") && responseHeader.equals("OK")) {
+                        String line;
+                        // Read until Sentinel
+                        while ((line = in.readLine()) != null) {
+                            if (line.equals("__END__")) break;
+                            System.out.println(line);
+                        }
+                    }
+                    // Handle Single-line Response
+                    else {
+                        System.out.println("[SERVER]: " + responseHeader);
                     }
                 }
-
-                // Receive Response
-                String response = in.readLine();
-                System.out.println("[SERVER]: " + response);
-
-                socket.close();
-
+            }
+        } catch (IOException e) {
+            System.out.println("Error: " + e.getMessage());
+        } finally {
+            // Cleanup Resources
+            try {
+                if (socket != null) socket.close();
+                scanner.close();
+                System.out.println("Client closed.");
             } catch (IOException e) {
-                System.out.println("Connection Error: " + e.getMessage());
+                e.printStackTrace();
             }
         }
-        scanner.close();
     }
 
-    // Helper to read a text file from your own computer to send to the server
+    // Load file content from local disk
     private static String readLocalFile(String path) {
         try {
             File file = new File(path);
@@ -128,8 +176,6 @@ public class clientMain {
                 }
             }
             return content.toString();
-        } catch (IOException e) {
-            return null;
-        }
+        } catch (IOException e) { return null; }
     }
 }

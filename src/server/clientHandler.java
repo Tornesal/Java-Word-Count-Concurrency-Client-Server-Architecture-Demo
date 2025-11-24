@@ -7,12 +7,12 @@ public class clientHandler implements Runnable {
 
     private final Socket socket;
     private final cacheHandler cache;
-    private final dataManager dataManager;
+    private final dataManager dm;
 
-    public clientHandler(Socket socket, cacheHandler cache, dataManager dataManager) {
+    public clientHandler(Socket socket, cacheHandler cache, dataManager dm) {
         this.socket = socket;
         this.cache = cache;
-        this.dataManager = dataManager;
+        this.dm = dm;
     }
 
     @Override
@@ -21,100 +21,140 @@ public class clientHandler implements Runnable {
                 BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 PrintWriter out = new PrintWriter(socket.getOutputStream(), true)
         ) {
-            // Protocol Handshake
-            String header = in.readLine();
-            if (header == null) return;
+            String header;
 
-            System.out.println("Received header: " + header);
+            // Loop to handle multiple requests per connection
+            while ((header = in.readLine()) != null) {
 
-            // Parse TAB-delimited protocol
-            String[] parts = header.split("\t");
-            if (parts.length < 2) {
-                out.println("ERROR\tBAD_HEADER");
-                return;
-            }
+                System.out.println("Received header: " + header);
 
-            String command = parts[0];
-            String filename = parts[1];
-            // Safety check for optional flags (some commands don't use them)
-            String flags = parts.length > 2 ? parts[2] : "";
+                // Parse TAB-delimited protocol
+                String[] parts = header.split("\t");
+                if (parts.length < 2) {
+                    out.println("ERROR\tBAD_HEADER");
+                    continue; // Skip to next request
+                }
 
-            // Data Ingestion (for STORE/UPDATE)
-            String data = null;
-            if (command.equals("STORE") || command.equals("UPDATE")) {
-                data = in.readLine();
-                if (data == null) { out.println("ERROR\tNO_DATA"); return; }
-            }
+                String command = parts[0];
+                String filename = parts[1];
+                String flags = parts.length > 2 ? parts[2] : "";
 
-            // Command Processing
-            switch (command) {
-                case "STORE":
-                case "UPDATE":
-                    // Write-Through Strategy: Update Disk AND Cache
-                    // Ensures consistency if the server crashes immediately after
-                    dataManager.saveFile(filename, data);
-                    cache.put(filename, data);
+                // Data Ingestion
+                String data = null;
+                if (command.equals("STORE") || command.equals("UPDATE")) {
 
-                    // Calculate stats for this specific request
-                    wordCounts wc = wordCounter.count(data);
+                    StringBuilder sb = new StringBuilder();
+                    String line;
 
-                    // Update the persistent global system totals
-                    dataManager.updateTotals(wc.lineCount, wc.wordCount, wc.charCount);
-
-                    // Build response based on user flags
-                    StringBuilder resp = new StringBuilder("OK");
-                    if (flags.contains("L")) resp.append("\tLINES=").append(wc.lineCount);
-                    if (flags.contains("W")) resp.append("\tWORDS=").append(wc.wordCount);
-                    if (flags.contains("C")) resp.append("\tCHARS=").append(wc.charCount);
-                    out.println(resp.toString());
-                    break;
-
-                case "READ":
-                    String content = null;
-
-                    // Read-Through Strategy
-                    // 1. Check RAM (Cache) for speed
-                    if (cache.contains(filename)) {
-                        content = cache.get(filename);
-                    }
-                    // 2. Fallback to Data Layer (Disk)
-                    else {
-                        content = dataManager.readFile(filename);
-                        if (content != null) {
-                            System.out.println("[DATA] Disk Read: " + filename);
-                            // Populate cache to speed up future reads
-                            cache.put(filename, content);
+                    // Sentinel Loop
+                    // Reads lines until the magic word is found
+                    while ((line = in.readLine()) != null) {
+                        if (line.equals("__END__")) {
+                            break;
                         }
+                        sb.append(line).append("\n");
                     }
 
-                    if (content != null) out.println("OK\t" + content);
-                    else out.println("ERROR\tFILE_NOT_FOUND");
-                    break;
+                    // Formatting Fix
+                    // Remove the trailing newline from the last append operation
+                    if (sb.length() > 0) {
+                        sb.setLength(sb.length() - 1);
+                    }
 
-                case "REMOVE":
-                    // Maintain consistency by cleaning both layers
-                    cache.remove(filename);
-                    dataManager.deleteFile(filename);
-                    out.println("OK\tREMOVED");
-                    break;
+                    data = sb.toString();
 
-                case "LIST":
-                    // Directory lookup on the Data Layer
-                    out.println("OK\tFILES=" + dataManager.getFileList());
-                    break;
+                    // Validation check
+                    if (data.isEmpty()) {
+                        out.println("ERROR\tNO_DATA");
+                        continue;
+                    }
+                }
 
-                case "TOTALS":
-                    // Retrieve persistent system-wide statistics
-                    out.println("OK\t" + dataManager.getTotals());
-                    break;
+                // Command Processing
+                switch (command) {
+                    case "STORE":
+                    case "UPDATE":
+                        // Write-Through Strategy: Update Disk AND Cache
+                        dm.saveFile(filename, data);
+                        cache.put(filename, data);
 
-                default:
-                    out.println("ERROR\tUNKNOWN_COMMAND");
-                    break;
+                        // Calculate stats for this specific request
+                        wordCounts wc = wordCounter.count(data);
+
+                        // Update the persistent global system totals
+                        dm.updateTotals(wc.lineCount, wc.wordCount, wc.charCount);
+
+                        // Build response based on user flags
+                        StringBuilder resp = new StringBuilder("OK");
+                        if (flags.contains("L")) resp.append("\tLINES=").append(wc.lineCount);
+                        if (flags.contains("W")) resp.append("\tWORDS=").append(wc.wordCount);
+                        if (flags.contains("C")) resp.append("\tCHARS=").append(wc.charCount);
+                        out.println(resp.toString());
+                        break;
+
+                    case "READ":
+                        String content = null;
+
+                        // Read-Through Strategy
+                        // 1. Check RAM (Cache) for speed
+                        if (cache.contains(filename)) {
+                            content = cache.get(filename);
+                        }
+                        // 2. Fallback to Data Layer (Disk)
+                        else {
+                            content = dm.readFile(filename);
+                            if (content != null) {
+                                System.out.println("[DATA] Disk Read: " + filename);
+                                // Populate cache to speed up future reads
+                                cache.put(filename, content);
+                            }
+                        }
+
+                        if (content != null) {
+                            // Send Status
+                            out.println("OK");
+
+                            // Send Content
+                            out.print(content);
+
+                            // Formatting for Sentinel
+                            if (!content.endsWith("\n")) {
+                                out.println();
+                            }
+
+                            // Send Sentinel
+                            out.println("__END__");
+                        }
+                        else {
+                            out.println("ERROR\tFILE_NOT_FOUND");
+                        }
+                        break;
+
+                    case "REMOVE":
+                        // Maintain consistency by cleaning both layers
+                        cache.remove(filename);
+                        dm.deleteFile(filename);
+                        out.println("OK\tREMOVED");
+                        break;
+
+                    case "LIST":
+                        // Directory lookup on the Data Layer
+                        out.println("OK\tFILES=" + dm.getFileList());
+                        break;
+
+                    case "TOTALS":
+                        // Retrieve persistent system-wide statistics
+                        out.println("OK\t" + dm.getTotals());
+                        break;
+
+                    default:
+                        out.println("ERROR\tUNKNOWN_COMMAND");
+                        break;
+                }
             }
 
         } catch (IOException e) {
-            System.out.println("Handler error: " + e.getMessage());
+            System.out.println("Handler error (Client Disconnected): " + e.getMessage());
         } finally {
             try { socket.close(); } catch (IOException ignore) {}
         }
