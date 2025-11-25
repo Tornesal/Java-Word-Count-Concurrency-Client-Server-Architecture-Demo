@@ -74,17 +74,20 @@ public class clientHandler implements Runnable {
                 switch (command) {
                     case "STORE":
                     case "UPDATE":
-                        // Write-Through Strategy: Update Disk AND Cache
+                        // If file exists, subtract old counts first
+                        String existingContent = dm.readFile(filename);
+                        if (existingContent != null) {
+                            wordCounts oldCounts = wordCounter.count(existingContent);
+                            dm.subtractTotals(oldCounts.lineCount, oldCounts.wordCount, oldCounts.charCount);
+                        }
+
+                        // Now save new file and add new counts
                         dm.saveFile(filename, data);
                         cache.put(filename, data);
 
-                        // Calculate stats for this specific request
                         wordCounts wc = wordCounter.count(data);
-
-                        // Update the persistent global system totals
                         dm.updateTotals(wc.lineCount, wc.wordCount, wc.charCount);
 
-                        // Build response based on user flags
                         StringBuilder resp = new StringBuilder("OK");
                         if (flags.contains("L")) resp.append("\tLINES=").append(wc.lineCount);
                         if (flags.contains("W")) resp.append("\tWORDS=").append(wc.wordCount);
@@ -131,7 +134,12 @@ public class clientHandler implements Runnable {
                         break;
 
                     case "REMOVE":
-                        // Maintain consistency by cleaning both layers
+                        String contentToRemove = dm.readFile(filename);
+                        if (contentToRemove != null) {
+                            wordCounts removeCounts = wordCounter.count(contentToRemove);
+                            dm.subtractTotals(removeCounts.lineCount, removeCounts.wordCount, removeCounts.charCount);
+                        }
+
                         cache.remove(filename);
                         dm.deleteFile(filename);
                         out.println("OK\tREMOVED");

@@ -29,14 +29,14 @@ public class dataManager {
 
     // File Operations
 
-    public void saveFile(String filename, String content) throws IOException {
+    public synchronized void saveFile(String filename, String content) throws IOException {
         // Writes raw bytes to the storage directory
         Path path = Paths.get(STORAGE_DIR, filename);
         Files.write(path, content.getBytes());
         System.out.println("[DATA] Persisted: " + filename);
     }
 
-    public String readFile(String filename) throws IOException {
+    public synchronized String readFile(String filename) throws IOException {
         // Used when a file is requested but fell out of the Cache
         Path path = Paths.get(STORAGE_DIR, filename);
         if (!Files.exists(path)) return null;
@@ -44,7 +44,7 @@ public class dataManager {
         return new String(Files.readAllBytes(path));
     }
 
-    public boolean deleteFile(String filename) {
+    public synchronized boolean deleteFile(String filename) {
         // Removes the physical reference from the disk
         File f = new File(STORAGE_DIR, filename);
         boolean deleted = f.delete();
@@ -70,6 +70,14 @@ public class dataManager {
     }
 
     // Global Statistics
+
+    // Needed to subtract totals when updating a file
+    public void subtractTotals(int l, int w, int c) {
+        globalLines.addAndGet(-l);
+        globalWords.addAndGet(-w);
+        globalChars.addAndGet(-c);
+        saveTotals();
+    }
 
     public void updateTotals(int l, int w, int c) {
         // Add new file stats to the running system total
